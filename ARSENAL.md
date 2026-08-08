@@ -2,7 +2,7 @@
 
 > Compilado para **estudio / CV / prep de entrevista de pentest**. Cada técnica va con *qué es*, *cómo se usa* y su *defensa* (para poder explicarla en pizarra).
 > Boxes de referencia: **Resizer** (Hard web), **Nimbus** (Hard cloud/AWS), **ArtificialUniversity** (Insane web, client-side→SSRF→gRPC RCE), **Sandcastle**/**Callfuscated** (Insane pwn/rev), **Blinded** (Insane heap pwn).
-> Método reusable en [PLAYBOOK.md](PLAYBOOK.md). Writeups por box: `Resizer.md`, `Nimbus.md`, `ArtificialUniversity.md`, `Sandcastle.md`, `Callfuscated.md`, `Blinded_research-notes.md`.
+> Método reusable en [PLAYBOOK.md](PLAYBOOK.md). Writeups por box: `Resizer.md`, `Nimbus.md`, `ArtificialUniversity.md`, `Sandcastle.md`, `Callfuscated.md`, `WonkyAES.md`, `Blinded_research-notes.md`.
 > Referencias madre: HackTricks · PayloadsAllTheThings · hackingthe.cloud · SecLists · GTFOBins/LOLBAS · revshells.com · The Hacker Recipes (AD).
 
 ---
@@ -237,6 +237,42 @@ Cuando el binario es de otra arquitectura (ARM64/MIPS/…) y **no podés instala
 
 ---
 
+## 10c. 🔐 Crypto — ataques clásicos de CTF (de Wonky AES + genéricos)
+
+> Categoría con poca práctica hasta ahora. Base para arrancar cualquier crypto: **mirá QUÉ te dan** (¿oráculo? ¿pares? ¿nonce? ¿parámetros raros?) — el bug suele estar en el *uso*, no en el algoritmo.
+
+### 🩹 Fault attacks / DFA (de Wonky AES)
+
+**Differential Fault Analysis sobre AES-128** (Piret-Quisquater). Aplica cuando podés obtener, para el **mismo plaintext**, la cifra **correcta** y una **con 1 byte corrompido** en una ronda tardía.
+
+- **Modelo:** fault de 1 byte en **ronda 9, post-ShiftRows / pre-MixColumns** → tras MixColumns esparce a **1 columna** con patrón `(2δ, δ, δ, 3δ)`; ronda 10 lo permuta a una **diagonal** de 4 bytes en el ciphertext.
+- **Recuperación:** por par, los 4 bytes que difieren = qué columna se faulteó. Se plantea `InvSBox(C_i ⊕ K_i) ⊕ InvSBox(C*_i ⊕ K_i) = coef·δ` y se prueban (4 filas × 255 δ × 256 K). **~2 pares por columna → 4 bytes de K10 únicos**; 4 columnas → **K10 completa**.
+- **K10 → key maestra:** el key schedule de AES es **invertible** (recorrer para atrás `w[i-4]=w[i]⊕temp(w[i-1])`). Luego AES-decrypt del flag.
+- **Metodología:** implementar AES propio con hook de fault + **self-test local** (recuperar una key random + verificar vector NIST) ANTES de tocar el target. Tool self-contained en `WonkyAES.md`. Otros modelos DFA: fault en ronda 8 (ataque de 2 fallos que recupera toda la key), fault en la key schedule.
+- **Defensa:** no exponer salidas faulty; doble cómputo + comparación; sensores anti-glitch (voltaje/clock/láser).
+
+### 🧮 Checklist genérico de crypto CTF (por si el reto es otro)
+
+| Pista en el reto | Ataque probable |
+|---|---|
+| **RSA** con `e=3` / mensaje corto | cube-root / Håstad (broadcast) |
+| **RSA** `n` factorizable (FactorDB, Fermat si p≈q, primos cercanos) | factorizar → φ → d |
+| **RSA** mismo `n`, dos `e` coprimos | common modulus |
+| **RSA** leak de `d` parcial / `dp,dq` | Coppersmith / CRT recovery |
+| **AES-ECB** (bloques iguros ⇒ patrón) | ECB byte-at-a-time / cut-and-paste |
+| **AES-CBC** + error de padding distinguible | **padding oracle** (decrypt/forge) |
+| **CBC** con IV = key, o IV fijo | recuperar IV/plaintext, bit-flipping |
+| **CTR/GCM nonce reutilizado** | keystream reuse / forjar tag (nonce-reuse) |
+| **Stream/OTP key reusada** | XOR de cifrados → crib-dragging |
+| **Fault / glitch** disponible | **DFA** (arriba) |
+| **PRNG** (`rand()`, Mersenne, LCG) predecible | reconstruir estado → predecir (ver PRNG en §10) |
+| **ECDSA/DSA** nonce `k` reutilizado o sesgado | recuperar clave privada (lattice/HNP) |
+| **Hash length-extension** (MAC = H(secret‖msg)) | `hashpump` / forjar |
+
+**Toolkit crypto:** `python3` + **pycryptodome**, **SageMath** (lattices/Coppersmith/curvas), **z3**, `sympy`, `gmpy2`, **RsaCtfTool**, FactorDB, `hashpump`. Instalar: `pip install --break-system-packages pycryptodome gmpy2 sympy z3-solver`.
+
+---
+
 ## 11. Mapa técnica → box (de un vistazo)
 
 ```
@@ -250,6 +286,8 @@ ARTIFICIALUNIVERSITY      checkout unauth (precio arbitrario) → bot admin → 
 SANDCASTLE (Insane, pwn)  VM Brainfuck (broker+workers seccomp) → arbitrary write (ptr sin bounds)
                           → open vs popen differential → popen prefix-bypass → flag
 CALLFUSCATED (Insane rev) call-obf + VM bytecode + MBA → devirtualizar dinámico (gdb API) → keystream
+WONKY AES (crypto)        DFA/fault injection: pares correcto+faulty (fault ronda 9) → recuperar K10
+                          por diferencial → invertir key schedule → key maestra → decrypt flag
 POLY      (Insane, rev)   ARM64, decoys multicapa, /dev/null truco (fd 3) [en progreso]
 BLINDED   (Insane, pwn)   House of Water → [pendiente FSOP]   [parked]
 ```
