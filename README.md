@@ -12,8 +12,11 @@
 |---|---|---|---|---|
 | [Resizer](Resizer.md) | 🔴 Hard | Web | ✅ Solved | Path traversal → arbitrary write → RCE via namespace-package `.so` shadowing |
 | [Nimbus](Nimbus.md) | 🔴 Hard | Cloud / AWS | 🟡 User | SSRF (decimal/octal IP bypass) → IMDS creds → SQS YAML deserialization → RCE → LocalStack |
+| [ArtificialUniversity](ArtificialUniversity.md) | ⚫ Insane | Web | ✅ Solved | Unauth checkout → admin bot → path traversal → CVE-2024-4367 (pdf.js) → SameSite bypass → gopher/gRPC prototype pollution → RCE |
+| [Heapify](Heapify.md) | ⚫ Insane | Pwn (heap) | ✅ Solved | glibc 2.35 no-leak · safe-linking + comparison oracle · `malloc_consolidate` libc leak · OOB min-heap → arbitrary free · tcache poison · FSOP House of Apple 2 |
 | [Sandcastle](Sandcastle.md) | ⚫ Insane | Pwn | ✅ Solved | VM sandbox escape · no-bounds arbitrary write · `open()`/`popen()` differential injection |
 | [Callfuscated](Callfuscated.md) | ⚫ Insane | Reverse Eng. | ✅ Solved | VM devirtualization (8-opcode bytecode) · MBA · call-obfuscation · GDB Python API |
+| [Wonky AES](WonkyAES.md) | ⚫ Insane | Crypto | ✅ Solved | Differential Fault Analysis on AES-128 (Piret) · round-key recovery · key-schedule inversion |
 | [Poly](Poly.md) | ⚫ Insane | Reverse Eng. | 🟡 Analyzed | ARM64 multi-layer obfuscation · MD5/CRC32 constant ID · Unicorn emulation (no qemu) |
 | [Blinded](Blinded_research-notes.md) | ⚫ Insane | Pwn (heap) | 🔬 Research | glibc 2.35 · House of Water · tcache stashing · deterministic no-leak analysis |
 
@@ -27,7 +30,9 @@
 
 **Reverse Engineering** — GDB scripting (Python API) · Capstone · Unicorn / angr · custom VM devirtualization · Mixed Boolean Arithmetic · crypto-primitive recognition (MD5/CRC32/AES)
 
-**Binary Exploitation** — glibc 2.35 heap (tcache poisoning, House of Water) · deterministic no-leak exploitation · ASLR · FSOP analysis
+**Binary Exploitation** — glibc 2.35 heap (tcache poisoning, House of Water, safe-linking bypass) · deterministic no-leak exploitation via side-channel comparison oracles · `malloc_consolidate` / unsorted-bin leaks · ASLR defeat · **FSOP House of Apple 2** · VM sandbox escape
+
+**Crypto** — Differential Fault Analysis (AES) · key-schedule inversion · classic CTF primitives (padding/PRNG/LCG)
 
 **Tooling** — `nmap` · `ffuf`/`feroxbuster` · BloodHound · impacket · `pwntools` · `gdb`+pwndbg · `one_gadget` · `patchelf`
 

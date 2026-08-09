@@ -183,7 +183,7 @@
 
 ---
 
-## 10. Explotación de binarios / heap pwn (Blinded) [parked]
+## 10. Explotación de binarios / heap pwn (Heapify ✅ RESUELTO · Blinded [parked])
 
 | Tool | Para qué |
 |---|---|
@@ -194,6 +194,36 @@
 | **one_gadget / ropper / ROPgadget** | magic gadgets / cadenas ROP |
 
 Conceptos glibc 2.35: House of Water (sembrar `main_arena`), FSOP (`_IO_FILE`), offsets clave (`system`, `_IO_2_1_stdout_`, `_IO_list_all`, `__free_hook`). **Nicho de exploit-dev, no pentest diario** → prioridad web/AD.
+
+### 🧨 Heap moderno SIN primitivo de leak/output (de Heapify — Insane ✅, glibc 2.35, PIE+FullRELRO+NX+Canary, sin hooks) — flag `HTB{dd148d2b41d538fa950eee1f6a1fa9ce}`
+
+> Reto "min-heap de comandos sobre el heap". **No imprime NUNCA una dirección** y Full RELRO mata el GOT. La lección madre: **se puede derrotar ASLR y ganar RCE sin un solo primitivo de lectura**, convirtiendo al programa mismo en un **oráculo de comparación**. Cadena final `~/ctf/heapify/pwn_heapify/exploit/{hx.py,sploit.py}` (12/12 local, 1er intento remoto). Writeup: `Heapify.md`. Técnicas 100% reusables:
+
+- **⚡ Refinamiento del oráculo — búsqueda por RANGO (no binaria).** En vez de 1 bit/query, meté *k* sondas por ronda que parten el intervalo en *k+1* → **log₂(k+1) bits/ronda** (con k=15 → ~4 bits). Desempate final con **1 sonda** (tie-free: `upheap` no swapea en empate → el target insertado 1ro queda en la raíz → `r==0 ⇔ target==sonda`). Recupera `heap_base` EXACTO buscando en `[0,2³⁶)` sin asumir bits altos del ASLR. Mismo esquema para libc en `[0,2⁴⁷)`.
+
+- **🔑 Libc leak SIN OOB — `malloc_consolidate` + dispensador `last_remainder` (alternativa más simple al forge).** Llená N chunks 0x80 contiguos (7 tcache + ~22 fastbin adyacentes) y dispará **`malloc_consolidate`** mandando el `size` con **~70000 dígitos** (el `scanf` interno pide un `malloc` gigante). Los fastbins se **fusionan** en un chunk grande → **unsorted** → los `malloc` siguientes salen del split del `last_remainder` con `user[0] = &main_arena.bins[0]` = `libc+0x219ce0`. Mismo oráculo → libc base. No hace falta forjar `size` con la OOB.
+
+- **🔑 `scanf("%zu")` con input NO numérico = leak gratis (no escribe el destino).** Por el estándar C, ante *matching failure* scanf **deja el argumento sin tocar**. Si el destino es un chunk recién liberado a tcache, su **`fd` safe-linked (`&fd>>12` en el 1er free de un bin vacío = `heap_base>>12`)** sobrevive ahí. Al reALOCAR ese chunk y mandar `"z"` como número → el chunk queda con **prioridad = `heap_base>>12`**. *(mandar la `"z"` SIN newline: el `getchar()` post-scanf se la come; con newline, el `fgets` de data lo desincroniza).* De-shifteás y tenés heap base. *Defensa:* chequear el valor de retorno de `scanf`; inicializar buffers; no reusar memoria sin limpiar.
+
+- **🔑 Oráculo de COMPARACIÓN por orden-de-pop (leak binario sin output primitive).** El heap ordena por prioridad; al ejecutar, el `do_cmd` imprime distinto según el comando (`"flag"`→"Congratulations…" vs otro→"Invalid command!"). Para leakear un valor oculto `U` (una prioridad, ej. `heap>>12`): insertás el chunk-target con data `"flag"` y un chunk-probe con prioridad `P` y data distinta; **un `exec` popea el menor y su output te dice `U<P` o `U≥P`** = 1 bit. Binary-search sobre `P` → **~52 iteraciones/puntero**, sin format string ni read. *(Ojo tie-break: en `U==P` el orden lo decide la estructura del heap → la comparación efectiva puede ser `≤`; ajustar el retorno de la búsqueda).* Es EL patrón para leakear con solo un canal booleano observable. *Defensa:* no exponer diferencias observables de orden/tiempo sobre datos secretos.
+
+- **🔑 OOB en sift-down de priority-queue.** El `downheap` chequea hoja con `slots[left]==0` (confía en el zero-fill de `calloc`) pero **NO** valida `left < count` → cuando un elemento se hunde a `idx≥32`, `left=2·idx+1≥63` lee/escribe **fuera del array**, en el chunk adyacente. El **swap** de downheap **escribe un valor 64-bit que vos controlás** (la prioridad del 1er chunk) en un slot in-bounds → **write primitive**. *(El deref del slot OOB necesita una dirección MAPEADA para no crashear — de ahí que el heap-leak vaya primero).* *Defensa:* validar SIEMPRE índices contra `count`, no confiar en centinelas de memoria.
+
+- **🔑 Forjar un chunk falso al UNSORTED bin (leak de libc cuando `size` está capado ≤tcache).** Si el programa solo aloca chunks ≤0x80 (tcache/fastbin, `fd` safe-linked, cero libc), forjás un chunk falso: `*(F-8)=0x431` (size >0x410 = fuera de tcache, no fastbin → **unsorted**), un **fake-next** en `F+size` con `size=0x21` (prev_inuse SET → no double-free error), y **next-next** con prev_inuse SET (→ no forward-consolidate). `free(F)` pasa todos los checks de `_int_free` → cae al unsorted → **`F[0]=F[8]=main_arena`** (offset conocido a libc). Reusás `F` con scanf-fail → prioridad = puntero a libc → mismo oráculo → **libc base**. *Defensa:* heap con metadata fuera de banda; hardened_malloc.
+
+- **🔑 Free ARBITRARIO por corrupción de slot + burbujeo a raíz.** El OOB-write pone `slots[32]=F` (F = userptr del chunk falso). `remove_min` solo popea la RAÍZ, así que F debe llegar a `slots[0]`: con `*F` = prioridad mínima, F **burbujea** a lo largo de los `exec` (y/o lo agarra el `slots[count]→raíz` cuando `count` baja). **Predecí el número EXACTO de execs con un simulador fiel** (mirror en Python de up/downheap): en Heapify, F sale en el **exec #44**. Cuando F es raíz → `remove_min`→`free(F)` = free de dirección arbitraria.
+
+- **🔑 Bootstrap de integración (chicken-egg del OOB): truco reserve-chunk LIFO.** El OOB lee un slot que aliasa el chunk **físicamente pegado al struct** (dirección fija). Pero el heap-leak (destructivo) ensucia esa zona. Solución: creá ese chunk-target **PRIMERO con prioridad máxima única** → nunca lo popeás durante el leak → al drenar popea **último** → queda **cabeza de tcache** → se **realloca primero** en la misma dirección → ahí ponés tu `chunk0` con la prioridad mapeada que el OOB necesita.
+
+- **🔑 Simulador fiel = arma de grooming.** Reimplementar en Python el `add_cmd`/`upheap`/`remove_min`/`downheap` EXACTOS (leídos del objdump, el binario suele tener símbolos) permite **calcular determinísticamente** qué orden de inserción hunde un elemento a `idx≥32`, y en qué `exec` se libera el chunk falso — sin adivinar en gdb. Validá el sim contra un crash conocido (core dump).
+
+- **🔑 Grooming del OOB: usar POCOS elementos (34, no 63).** El hundimiento útil es a `idx=32`, pero con 63 elementos el sift-down sigue a hojas 38-61 = memoria NO controlada → crash. Con **34** elementos, tras el pop quedan 33 y el único nodo de nivel-5 alcanzable es el 32 (las demás ramas terminan en slot 0) → el OOB queda **dirigible**. El nº exacto de execs hasta `free(F)` sale del simulador (varía por groom; no es fijo). *Regla:* achicá el árbol hasta que solo el índice-objetivo sea alcanzable.
+
+- **🔑 Endgame FSOP House of Apple 2 (Full RELRO + sin hooks 2.35).** tcache poison (`fd=(chunk>>12)^target`) → escribí **`_IO_list_all` = FILE falso** en el heap. `exit(1)` (gratis: opción de menú inválida `3`) → `_IO_flush_all` recorre la lista → `_IO_OVERFLOW`. FILE falso: `vtable=_IO_wfile_jumps` (válida, pasa `IO_validate_vtable`; su `__overflow`=`_IO_wfile_overflow`), `_wide_data=W`, `W->_wide_vtable=VT` (**no** validada), `VT->__doallocate=system`, `_IO_write_ptr(1)>_IO_write_base(0)`, `_mode=0`, `_lock`→zeros, `_chain=NULL`. Como `rdi`=FILE, `system(FILE)`=`system(_flags)`.
+  - **⚠️⚠️ TRAMPA (me costó horas): `_flags` controla el flujo de `_IO_wfile_overflow` además de ser el arg de `system`.** `test al,0x8`(NO_WRITES), `test ah,0x8`(→0x800 CURRENTLY_PUTTING) y en `_IO_wdoallocbuf` `test _flags,0x2`(UNBUFFERED): si CUALQUIERA está puesto, **saltea `__doallocate`→no llama system, exit limpio sin shell**. Los 2 primeros bytes de `_flags` deben tener limpios **0x2, 0x8, 0x800**. `" /bin/sh"` **FALLA** (`/`=0x2f tiene bit 0x8→0x800). Usar **`"AA;/bin/sh"`** (`'A'`=0x41 cumple los 3; `sh -c` corre `AA` fallido y luego `/bin/sh`). Cuando el FILE está perfecto pero no dispara → sospechá SIEMPRE de los bits bajos de `_flags` primero.
+  - *Alternativa:* hijack del resolver `ld.so dso_find_for_object` (= Blinded). *Defensa:* `_FORTIFY`, CET, y que la vtable ancha también se valide.
+
+- **Debug headless:** `patchelf` para correr con la libc/ld exactas standalone (símbolos + libc correcta), `gdb -nx -batch -x script.gdb` (evita gdbinit roto), y leer `/proc/pid/mem` desde pwntools para inspeccionar heap sin plugins. Medir entropía ASLR real (heap ~30bit, libc ~44bit) para decidir si un oráculo mapped/unmapped es viable o hace falta el value-oracle exacto.
 
 ### VM / sandbox-escape pwn (de Sandcastle — Insane, clubby789)
 
