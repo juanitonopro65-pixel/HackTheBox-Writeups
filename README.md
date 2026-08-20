@@ -45,6 +45,19 @@ write-ups will be published once the advisories are out.
 
 ---
 
+## 📄 Original research
+
+**[WordPress escapes your values — not your array keys](research-wordpress-array-keys.md)**
+
+`wp_magic_quotes()` escapes every superglobal on every request — but
+`add_magic_quotes()` maps over *values only*. Array keys arrive unescaped, which
+makes `foreach ($_POST['f'] as $id => $v)` with `$id` in a query injectable
+**even inside quotes**: the one case every WordPress SQLi scanner treats as safe.
+Measured on a live install, with the detector and the four false-positive classes
+that cost me candidates before I encoded them.
+
+---
+
 ## 📂 Writeups
 
 | Challenge | Difficulty | Category | Status | Key Techniques |
