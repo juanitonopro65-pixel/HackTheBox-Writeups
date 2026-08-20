@@ -2,7 +2,46 @@
 
 > Hands-on writeups and research notes from solving **Hard** and **Insane** HackTheBox challenges across **web, cloud, reverse engineering, and binary exploitation**. Focus on *understanding and explaining* each technique — every writeup pairs the offensive chain with its **defensive mitigation** and interview-style Q&A.
 
-**Handle:** `jushxv` · **Focus:** Offensive Security / Reverse Engineering / Exploit Analysis
+**HackTheBox:** `ju5nxv` · **Focus:** Vulnerability Research / Reverse Engineering / Binary Exploitation
+
+---
+
+## 🔍 Vulnerability Research — real software, coordinated disclosure
+
+Beyond CTF, I hunt memory-corruption bugs in real image decoders and submit them
+through **Trend Micro's Zero Day Initiative** under coordinated disclosure.
+**Five cases are currently in triage** (`ju4nxv0001`–`ju4nxv0005`).
+
+All five are the *same bug class*, found by looking for one specific mistake:
+
+> **one file-declared quantity sizes a buffer, while a *different* file-declared
+> quantity bounds the loop that fills it.**
+
+| # | Product | Component | Status |
+|---|---|---|---|
+| 1–4 | IrfanView | image decoders (4 distinct formats) | in triage — embargoed |
+| 5 | GIMP | image decoder | in triage — embargoed |
+
+One measurement I can share, because it shows the method rather than the bug: in
+case 3 the allocation was **832 bytes** while the write loop was bounded by a
+64-bit value near **4.29 GB** — a 32-bit truncation. I confirmed the exact
+overflow threshold by binary search, at byte **833**. Reports go out with a
+measured boundary, not an estimate.
+
+Method — the part I care about more than the bugs:
+
+- **static triage** — PE64 disassembly with Capstone (resynchronizing linear
+  sweep), scoring byte-write loops by how the bound relates to the allocation
+- **dynamic confirmation** — Page Heap via IFEO, `cdb` scripting, and a
+  *ground-truth harness*: the scanner must re-find bugs I already verified by
+  hand, or the scanner is broken, not the target
+- **minimal PoC** — every report ships the smallest file that triggers it, plus
+  a byte-level diff against a clean sample, so a triager reproduces in minutes
+
+**All five remain embargoed until the vendors ship a fix** — that is the deal you
+make when you file under coordinated disclosure, and it holds even when the
+vulnerable code is open source and the analysis would look good here. Technical
+write-ups will be published once the advisories are out.
 
 ---
 
