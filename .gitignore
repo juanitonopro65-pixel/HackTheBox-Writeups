@@ -1,2 +1,4 @@
 .tokensave/
 PROFILE_README.md
+*.bak-*
+labs-comunidad.zip
