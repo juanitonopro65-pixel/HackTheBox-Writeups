@@ -3,8 +3,8 @@
 > Guía para quien arranca. Nace de una pregunta real del grupo:
 > *"¿conocen algún exploit para Dropbear sshd 2015.69?"*
 >
-> La respuesta corta es que no hay ninguno que sirva. La respuesta larga enseña
-> bastante más que el exploit que no existe.
+> La respuesta corta: **sí hay exploit público, y aun así no te sirve para
+> entrar.** Entender por qué enseña bastante más que el exploit.
 
 ---
 
