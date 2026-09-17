@@ -1,1 +1,0 @@
-HTB{practica_no_teoria}

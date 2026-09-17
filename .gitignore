@@ -1,4 +1,2 @@
-.tokensave/
-PROFILE_README.md
-*.bak-*
-labs-comunidad.zip
+# El laboratorio no se sube hasta estar compilado y probado.
+guias-comunidad/lab-format-string/
