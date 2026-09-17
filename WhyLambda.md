@@ -1,7 +1,10 @@
 # Why Lambda — HTB (Hard, Web)
 
-> **Flag:** `HTB{th3_gr33ks_g0t_1t_4ll_wr0ng}`
-> Una sola petición, menos de diez segundos. La cadena se verificó antes en un
+> **Flag:** no la publico — el reto está **activo**. La bandera es la única parte
+> de un writeup que no enseña nada: es la respuesta del examen. Todo lo demás
+> está aquí entero, y así este documento sirve para resolverlo, no para saltárselo.
+>
+> Resuelto con una sola petición, en menos de diez segundos. La cadena se verificó antes en un
 > laboratorio local reconstruido desde el Dockerfile del reto, y contra el
 > objetivo real salió al primer intento.
 >
