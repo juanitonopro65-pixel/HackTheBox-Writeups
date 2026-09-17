@@ -79,18 +79,26 @@ que el servicio se caiga — que es ruido, no acceso.
 Es lo primero que hay que mirar en cualquier CVE. Los otros fallos de Dropbear de
 esa época lo ilustran perfecto:
 
-| CVE | qué hace | qué necesita |
-|---|---|---|
-| **2016-7406** | cadena de formato, ejecución de código | nada… pero no hay exploit funcional |
-| **2016-3116** | inyección de comandos vía xauth | **credenciales válidas** y X11 activado |
-| **2016-7407** | clave OpenSSH maliciosa al convertirla | que *otro* convierta tu fichero |
-| **2016-7408** | fallo en el cliente `dbclient` | que la víctima sea el cliente, no el servidor |
+| CVE | qué hace | ¿hay exploit público? | qué necesita |
+|---|---|---|---|
+| **2016-7406** | cadena de formato, ejecución de código | **no** | nada — pero sin exploit no sirve |
+| **2016-3116** | inyección de comandos vía xauth | **sí — Exploit-DB `EDB-40119`** | **credenciales válidas** y `X11Forwarding yes` |
+| **2016-7407** | clave OpenSSH maliciosa al convertirla | sí | que *otro* convierta tu fichero |
+| **2016-7408** | fallo en el cliente `dbclient` | sí | que la víctima sea el cliente, no el servidor |
 
 Mirá la columna derecha. **Ninguno te mete desde fuera.**
 
-El `2016-3116` sirve — pero *después* de tener usuario y contraseña. Eso lo
-convierte en una herramienta de **escalada**, no de entrada. Guardalo para
-cuando ya estés dentro.
+El `2016-3116` **sí tiene exploit público y funciona** — pero *después* de tener
+usuario y contraseña. Eso lo convierte en una herramienta de **escalada**, no de
+entrada. Guardalo para cuando ya estés dentro.
+
+> **Una corrección honesta, y la dejo escrita porque enseña más que la tabla.**
+> La primera versión de esta guía decía que *no había exploit público* para
+> Dropbear. Era falso: el `EDB-40119` existe y se encuentra en una búsqueda.
+> El error no fue de conocimiento sino de método — **afirmé un negativo con una
+> sola búsqueda**. Lo correcto era decir "no encontré", que es distinto de "no
+> existe". Un negativo necesita tanta prueba como un positivo, y ésta es
+> exactamente la trampa contra la que avisa el resto de la guía.
 
 ---
 
