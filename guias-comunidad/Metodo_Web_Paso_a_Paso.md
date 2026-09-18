@@ -262,6 +262,157 @@ Dos preguntas siempre:
 
 ---
 
+## Las seis recetas — de sumidero a exploit
+
+El paso anterior enseña a **reconocer**. Esto es lo que se hace con cada uno. Con
+estas seis se resuelve la mayoría de los retos web que traen código fuente.
+
+Cada receta tiene la misma forma: *cómo se reconoce*, *cómo se explota*, *cómo se
+comprueba*. La tercera parte no es opcional: es la que convierte un intento en una
+prueba.
+
+### Receta 1 — Inyección SQL con ventana
+
+**Se reconoce:** la consulta se arma con `format()`, una f-string o un `+`, **y el
+resultado se pinta en la página**. Lo segundo importa tanto como lo primero: si hay
+ventana, leés datos directamente en vez de sacarlos a ciegas.
+
+**Se explota:** cerrás la comilla y forzás una condición verdadera. El `--` comenta
+la comilla que sobra al final.
+
+```
+token=' OR 1=1--
+```
+
+Si necesitás datos de otra tabla, con `UNION`, igualando el número de columnas:
+
+```sql
+' UNION SELECT name,sql,null FROM sqlite_master--   -- SQLite
+```
+
+**Se comprueba:** tres peticiones. Valor válido → 1 fila. Valor inventado → 0
+filas. Ataque → todas.
+
+**Qué buscar:** el **id o uuid** del admin, tokens, roles. No pierdas tiempo con el
+hash de la contraseña: en estos retos suele ser de 64 caracteres aleatorios y no se
+rompe. **Te sirve la identidad, no la credencial.**
+
+### Receta 2 — Subida sin sanear → escritura arbitraria
+
+**Se reconoce:**
+
+```python
+file.save(CARPETA + "/" + file.filename)      # falta secure_filename()
+```
+
+**Se explota:** el nombre lo pone el cliente, así que lo ponés vos.
+
+```bash
+curl ... -F 'attachment=@/tmp/x;filename=../static/prueba.txt'
+```
+
+**Se comprueba:** subí dos ficheros iguales, uno con nombre normal y otro con
+`../`. Si solo el segundo aparece donde no debería, la travesía es la causa.
+
+**Qué escribir, en este orden:**
+
+1. Un fichero cualquiera dentro de la carpeta servida por web, **solo para
+   confirmar** que escribís.
+2. El **llavero o las claves** que la app usa para validar sesiones.
+3. Un fichero de configuración que la app **relea en cada petición**.
+4. Código, al final: casi siempre necesita un reinicio, y el reinicio no lo
+   controlás.
+
+> **Una escritura vale lo que vale el fichero que pisás.** Antes de elegir, buscá
+> qué ficheros lee la app *en cada petición* — ésos son los que dan algo inmediato.
+
+### Receta 3 — SSTI, motor por motor
+
+**Se reconoce:** contenido del usuario **compilado** como plantilla, no pintado
+como texto.
+
+**Se confirma siempre igual:** metés una operación y mirás si la hace. Si no sale
+`49`, no hay SSTI y cualquier carga que pruebes después es tiempo perdido.
+
+```
+Jinja2 / Flask    {{7*7}}   ->  49
+Chameleon         ${7*7}    ->  49
+```
+
+**Se explota** (Chameleon, el del ejemplo):
+
+```html
+<p tal:content='python: ...'>x</p>
+```
+
+Si hay filtro de caracteres, no pelees con él: **construí el texto en ejecución**
+con `chr()` y `+`, que el filtro ya no puede ver. Y para leer un fichero sin
+necesitar un punto, `list(open(...))` en vez de `.read()`.
+
+**Se comprueba:** la operación primero, la carga después. Nunca al revés.
+
+### Receta 4 — JWT: mirá quién decide
+
+**Se reconoce:** tres preguntas, y cada una tiene su ataque.
+
+- **¿Se comprueba el algoritmo?** Si el servidor acepta el `alg` del propio token →
+  `alg: none`.
+- **¿Verifica con la clave pública como secreto simétrico?** → confusión
+  RS256 → HS256.
+- **¿De dónde sale la clave pública?** Si sale de un fichero que podés escribir →
+  reemplazalo.
+
+**Se explota** (la tercera, que es la del ejemplo): generás tu propio par de
+claves, publicás tu parte pública como llavero con un `kid` tuyo, la subís con la
+receta 2, y a partir de ahí **firmás vos lo que quieras** — incluido el `user_id`
+del admin que sacaste con la receta 1.
+
+**Se comprueba:** pedí un endpoint que **solo** responda al admin. La señal es
+`200` contra `302`/`401`, y el **control es tu token normal**: tiene que seguir
+siendo rechazado ahí.
+
+### Receta 5 — Formatos que ejecutan al cargarse
+
+**Se reconoce:** `pickle.loads`, `yaml.load` sin `SafeLoader`, `marshal`, o un
+modelo Keras con una capa `Lambda`.
+
+**La marca que los distingue:** el objeto se ejecuta **al cargarse**, no al usarse.
+Eso tiene una consecuencia que despista mucho: un error posterior —*"no se pudo
+evaluar el modelo"*, un 422, un 500— puede llegar **después** de que tu código ya
+corrió. En *Why Lambda* estuve leyendo un 422 como fracaso cuando era el éxito.
+
+**Se comprueba:** que el efecto sea observable **por otro canal** —un fichero
+creado, una ruta que cambia de respuesta— y no por lo que conteste el endpoint que
+atacaste.
+
+### Receta 6 — Prototype pollution (Node)
+
+**Se reconoce:** `req.body` entero pasado a una función de mezcla o actualización,
+sin elegir campos.
+
+**Se explota:** se ensucia una propiedad que *otro* código lee sin comprobar que
+sea suya. **La parte difícil no es ensuciar: es encontrar qué propiedad lee
+alguien**, y eso se busca leyendo el código del framework, no el de la app.
+
+**Se comprueba:** ensuciá algo inofensivo y comprobá que persiste entre peticiones.
+**Aviso:** la contaminación no se deshace sola — reiniciá el laboratorio entre
+pruebas o vas a estar midiendo la prueba anterior.
+
+### Y cuando ya ejecutás: ¿dónde está la bandera?
+
+- `/flag.txt` o `/flag` en la raíz — **miralo en el Dockerfile**, suele haber un
+  `RUN mv flag.txt /flag.txt`.
+- Una variable de entorno `FLAG`.
+- Una tabla de la base de datos.
+
+> La cadena del ejemplo es, literalmente, **receta 1 + receta 2 + receta 4 +
+> receta 3**. Ninguna de las cuatro sirve sola: la SQLi te da un uuid que no podés
+> usar, la escritura te deja tocar un fichero que no sabés cuál importa, y el SSTI
+> está detrás de una puerta de admin. **El reto es el ensamblaje**, y por eso el
+> paso 6 —traducir fallos a capacidades— es el que hay que aprender.
+
+---
+
 ## Paso 5 — Probar UN fallo, con sus controles
 
 Nunca pruebes dos cosas a la vez. **Si cambiás dos variables, no mediste
